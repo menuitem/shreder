@@ -25,72 +25,43 @@ isVolumeLive (){
 	instanceID=$(aws ec2 describe-volumes --volume-ids $1 | gawk '/ATTACHMENTS/ {print $5}')
 	instanceState=$(aws ec2 describe-instances --instance-ids $instanceID | gawk '/^STATE[	 ]/ {print $3}')
 	[[ $instanceState = "stopped" ]] && state="${green}stopped${nc}" || state="${red}running${nc}"
-	printf "$1 belongs to instance $instanceID which is in $state state.\n"
+	printf "$1 belongs to instance $instanceID which is in $state state. "
 	[[ $instanceState = "stopped" ]] && return 0 || return 1 
+
 }
 
-
+instanceStartHelper (){
+	# this function take one parameter ($1) which is the AWS zone availability suffix, e.g. A,B,C  
+	shrederTagName="shreder${$1}"
+	shrederState=$(aws ec2 describe-instances --filter Name=tag:Name,Values=$shrederTagName|gawk '/STATE[	 ]/ {print $3}')
+			printf "shrederTagName state: $shrederState\n"
+			if [[ "$shrederState" = "stopped" ]]; then
+				shrederTagNameid=$(aws ec2 describe-instances --filter Name=tag:Name,Values=$shrederTagName|gawk '/INSTANCES.*/{print $8}')
+				printf "Starting $shrederTagName.\n"
+				aws ec2 start-instances --instance-ids $shrederTagNameid
+				while [ "$shrederState" != "running" ]; do
+					shrederState=$(aws ec2 describe-instances --filter Name=tag:Name,Values=$shrederTagName|gawk '/STATE[	 ]/ {print $3}')
+					printf "."
+					sleep 5 # move this "while" loop so it is not blocking the script
+				done
+				printf "\n$shrederTagName state: $shrederState\n"
+			elif [[ "$shrederState" = "" ]]; then
+					newInstance=$(aws ec2 run-instances --image-id ami-d75bd5a0 --instance-type t1.micro --key-name VPN-key --count 1 --security-groups shreder-group --placement AvailabilityZone=$availabilityZone|gawk '/INSTANCES/ {print $8}')
+					aws ec2 create-tags --resources $newInstance --tags Key=Name,Value=$shrederTagName
+			fi
+}
 
 startOrCreateShreder (){
 	availabilityZone=$1
 	case $availabilityZone in
 		'eu-west-1a')
-			shrederState=$(aws ec2 describe-instances --filter Name=tag:Name,Values=shrederA|gawk '/STATE[	 ]/ {print $3}')
-			printf "ShrederA state: $shrederState\n"
-			if [[ "$shrederState" = "stopped" ]]; then
-				shrederAid=$(aws ec2 describe-instances --filter Name=tag:Name,Values=shrederA|gawk '/INSTANCES.*/{print $8}')
-				# aws ec2 describe-instances --instance-ids $shrederAid
-				printf "Starting shrederA.\n"
-				aws ec2 start-instances --instance-ids $shrederAid
-				while [ "$shrederState" != "running" ]; do
-					shrederState=$(aws ec2 describe-instances --filter Name=tag:Name,Values=shrederA|gawk '/STATE[	 ]/ {print $3}')
-					printf "."
-					sleep 5 # move this "while" loop so it is not blocking the script
-				done
-				printf "\nShrederA state: $shrederState\n"
-			elif [[ "$shrederState" = "" ]]; then
-					newInstance=$(aws ec2 run-instances --image-id ami-d75bd5a0 --instance-type t1.micro --key-name VPN-key --count 1 --security-groups shreder-group --placement AvailabilityZone=$availabilityZone|gawk '/INSTANCES/ {print $8}')
-					aws ec2 create-tags --resources $newInstance --tags Key=Name,Value=shrederA
-			fi
+			instanceStartHelper A
 			;;
 		'eu-west-1b')
-			shrederState=$(aws ec2 describe-instances --filter Name=tag:Name,Values=shrederB|gawk '/STATE[	 ]/ {print $3}')
-			printf "ShrederB state: $shrederState\n"
-			if [[ "$shrederState" = "stopped" ]]; then
-				shrederBid=$(aws ec2 describe-instances --filter Name=tag:Name,Values=shrederB|gawk '/INSTANCES.*/{print $8}')
-				# aws ec2 describe-instances --instance-ids $shrederBid
-				printf "Starting shrederB.\n"
-				aws ec2 start-instances --instance-ids $shrederBid
-				while [ "$shrederState" != "running" ]; do
-					shrederState=$(aws ec2 describe-instances --filter Name=tag:Name,Values=shrederB|gawk '/STATE[	 ]/ {print $3}')
-					printf "."
-					sleep 5 # move this "while" loop so it is not blocking the script
-				done
-				printf "\nShrederB state: $shrederState\n"
-			elif [[ "$shrederState" = "" ]]; then
-				aws ec2 run-instances --image-id ami-d75bd5a0 --instance-type t1.micro --key-name VPN-key --count 1 --security-groups shreder-group --placement AvailabilityZone=$availabilityZone 
-				aws ec2 create-tags --resources $newInstance --tags Key=Name,Value=shrederB				
-			fi
+			instanceStartHelper B
 			;;
 		'eu-west-1c')
-			shrederState=$(aws ec2 describe-instances --filter Name=tag:Name,Values=shrederC|gawk '/STATE[	 ]/ {print $3}')
-			printf "ShrederC state: $shrederState\n"
-			if [[ "$shrederState" = "stopped" ]]; then
-				shrederCid=$(aws ec2 describe-instances --filter Name=tag:Name,Values=shrederC|gawk '/INSTANCES.*/{print $8}')
-				# aws ec2 describe-instances --instance-ids $shrederCid
-				printf "Starting shrederC.\n"
-				aws ec2 start-instances --instance-ids $shrederCid
-				while [ "$shrederState" != "running" ]; do
-					shrederState=$(aws ec2 describe-instances --filter Name=tag:Name,Values=shrederC|gawk '/STATE[	 ]/ {print $3}')
-					printf "."
-					sleep 5 # move this "while" loop so it is not blocking the script
-				done
-				printf "\nShrederC state: $shrederState\n"
-
-			elif [[ "$shrederState" = "" ]]; then
-				aws ec2 run-instances --image-id ami-d75bd5a0 --instance-type t1.micro --key-name VPN-key --count 1 --security-groups shreder-group --placement AvailabilityZone=$availabilityZone 
-				aws ec2 create-tags --resources $newInstance --tags Key=Name,Value=shrederC
-			fi
+			instanceStartHelper C
 			;;
 		*)  printf "Availability zone $availabilityZone is not supported ATM\n"
 			;;
@@ -103,6 +74,11 @@ startOrCreateShreder (){
 volumes=$*
 for volume in ${volumes} ; do
 	isVolumeLive $volume
+	if [[ $? -eq 0 ]]; then
+		printf "${green}The content on the $volume volume can be listed ${nc}\n"
+	else 
+		printf "${red}The content on the $volume volume can not be listed ${nc}\n"
+	fi
 done;
 
 # startOrCreateShreder "eu-west-1a"
@@ -111,3 +87,4 @@ done;
 # startOrCreateShreder "saseu-west-1c"
 # b=$([ "a" == "b" ])
 # printf "$b"
+# instanceStartHelper ZoneA
