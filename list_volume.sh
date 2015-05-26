@@ -43,7 +43,7 @@ instanceStartHelper (){
 				while [ "$shrederState" != "running" ]; do
 					shrederState=$(aws ec2 describe-instances --filter Name=tag:Name,Values=$shrederTagName|gawk '/STATE[	 ]/ {print $3}'|head -1)
 					printf "."
-					sleep 5 # move this "while" loop so it is not blocking the script
+					sleep 5 # move this "while" loop out so it is not blocking the script
 				done
 				printf "\n $shrederTagName state: $shrederState\n"
 			elif [[ "$shrederState" = "" || "$shrederState" = "${red}does not exist. ${nc}" ]]; then
@@ -53,7 +53,7 @@ instanceStartHelper (){
 				while [ "$shrederState" != "running" ]; do
 					shrederState=$(aws ec2 describe-instances --filter Name=tag:Name,Values=$shrederTagName|gawk '/STATE[	 ]/ {print $3}'|head -1)
 					printf "."
-					sleep 5 # move this "while" loop so it is not blocking the script
+					sleep 5 # move this "while" loop out so it is not blocking the script
 				done	
 			fi
 }
@@ -74,9 +74,12 @@ startOrCreateShreder (){
 			;;
 	esac
 
-	# aws ec2 describe-instances --filter Name=tag:Name,Values=shrederC
 }
 
+attachVolumeToShreder (){ # $1 parameter is a shreder instance Id
+	blockName=xvd
+	
+}
 
 volumes=$*
 for volume in ${volumes} ; do
@@ -86,7 +89,7 @@ for volume in ${volumes} ; do
 		volumeZone=$(aws ec2 describe-volumes --volume-ids $volume|gawk '/VOLUMES/ {print $2}')
 		startOrCreateShreder $volumeZone
 	else 
-		printf "${red}The content on the $volume volume can not be listed ${nc}\n"
+		printf "${red}The content on $volume volume can not be listed ${nc}\n"
 	fi
 done;
 
