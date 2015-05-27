@@ -13,6 +13,7 @@
 # $@, $* - return all arguments
 
 # Global variables
+declare -A devices     # Create an associative array
 red='\033[1;31m'
 green='\033[1;32m'
 nc='\033[0m' # no color
@@ -102,6 +103,33 @@ attachVolumeToShreder (){ # $1 parameter is a shreder instance Id, $2 is a vloum
 }
 
 
+detachVolume (){ # funtion parameters: $1 volume-id
+	# # This function will detach volume from not running instance, 
+	# 1. get a mount device
+	# 2. remember it / consider write it to file later
+	# 3. detach and reattach with  
+	
+	devicesMountDevice=$(aws ec2 describe-volumes --volume-ids $1 |gawk '/ATTACHMENTS/ { print $4 }')
+	devicesInstanceId=$(aws ec2 describe-volumes --volume-ids $1 |gawk '/ATTACHMENTS/ { print $5 }')
+	devices[$1]=$devicesMountDevice
+	devices[$1Instance]=$devicesInstanceId
+	echo "Detaching volume $1 from ${devices[$1Instance]} mounted as $devicesMountDevice device"
+	aws ec2 detach-volume --volume-id $1
+}
+
+reattachVolume(){ # funtion parameters: $1 volume-id
+	# This function will rettach volume to proper instance as a proper device instance, 
+	# 1. get mount device, and instance from "devices" associative array  
+	# 2. reattach
+	# 3. clear the record in "devices" associative array 
+	
+	# echo "${!devices[@]}"
+	# for e in "${!devices[@]}"; do echo $e -> ${devices[$e]}; done
+	
+	echo "Reattaching volume $1 to instance ${devices[$1Instance]} as ${devices[$1]} device."
+	aws ec2 attach-volume --volume-id $1 --instance-id ${devices[$1Instance]} --device ${devices[$1]}
+}
+
 volumes=$*
 for volume in ${volumes} ; do
 	isVolumeLive $volume
@@ -109,7 +137,11 @@ for volume in ${volumes} ; do
 		printf "${green}The content on the $volume volume can be listed ${nc}\n"
 		volumeZone=$(aws ec2 describe-volumes --volume-ids $volume|gawk '/VOLUMES/ {print $2}')
 		startOrCreateShreder $volumeZone
+		# detach from running instances
 		attachVolumeToShreder $shrederId $volume
+		# list content / shred the volume
+		# detach from shreder
+		#reattach / dispose
 	else 
 		printf "${red}The content on $volume volume can not be listed ${nc}\n"
 	fi
