@@ -13,7 +13,7 @@
 # $@, $* - return all arguments
 
 # Global variables
-declare -A devices     # Create an associative array
+declare -A devices     # Create an associative array (aa)
 red='\033[1;31m'
 green='\033[1;32m'
 nc='\033[0m' # no color
@@ -22,8 +22,8 @@ west1b="not set" #"eu-west-1b"
 west1c="not set" #"eu-west-1c"
 
 isVolumeLive (){
+	# function parameters:  volume ids from command line.
 	# This function returns 0 if volume is attached to stopped instance, 1 is returned otherwise.
-	# The function takes one argument ($1 in bash) wich is EC2 volume's id.
 	instanceID=$(aws ec2 describe-volumes --volume-ids $1 | gawk '/ATTACHMENTS/ {print $5}')
 	if [[ instanceID != "" ]]; then
 		instanceState=$(aws ec2 describe-instances --instance-ids $instanceID | gawk '/^STATE[	 ]/ {print $3}')
@@ -36,8 +36,7 @@ isVolumeLive (){
 
 }
 
-instanceStartHelper (){
-	# this function take one parameter ($1) which is the AWS zone availability suffix, e.g. A,B,C  
+instanceStartHelper (){ # function parameters: $1 AWS zone availability suffix, e.g. A,B,C  
 	shrederTagName="shreder$1"
 	shrederState=$(aws ec2 describe-instances --filter Name=tag:Name,Values=$shrederTagName|gawk '/STATE[	 ]/ {print $3}'|head -1)
 			[[ $shrederState = "" || $shrederState = "terminated" ]] && shrederState="${red}does not exist. ${nc}" || : ; 
@@ -83,7 +82,7 @@ startOrCreateShreder (){
 
 }
 
-attachVolumeToShreder (){ # $1 parameter is a shreder instance Id, $2 is a vloume to attach
+attachVolumeToShreder (){ # function parameters: $1 shreder instance Id, $2 volume Id to attach
 	blockPrefix="xvd"
 	blocksCount=$(aws ec2 describe-instances --instance-ids $1|gawk "/BLOCKDEVICEMAPPINGS.*$blockPrefix/"|wc -l)
 	blockSuffixOrdinal=$((97 + $blocksCount))
@@ -106,7 +105,7 @@ attachVolumeToShreder (){ # $1 parameter is a shreder instance Id, $2 is a vloum
 detachVolume (){ # funtion parameters: $1 volume-id
 	# # This function will detach volume from not running instance, 
 	# 1. get a mount device
-	# 2. remember it / consider write it to file later
+	# 2. remember it in associative array / consider write it to file later
 	# 3. detach and reattach with  
 	
 	devicesMountDevice=$(aws ec2 describe-volumes --volume-ids $1 |gawk '/ATTACHMENTS/ { print $4 }')
@@ -118,16 +117,17 @@ detachVolume (){ # funtion parameters: $1 volume-id
 }
 
 reattachVolume(){ # funtion parameters: $1 volume-id
-	# This function will rettach volume to proper instance as a proper device instance, 
-	# 1. get mount device, and instance from "devices" associative array  
+	# This function will rettach volume to proper instance under correct device name. 
+	# 1. get mount device and instance from "devices" associative array  
 	# 2. reattach
 	# 3. clear the record in "devices" associative array 
 	
-	# echo "${!devices[@]}"
-	# for e in "${!devices[@]}"; do echo $e -> ${devices[$e]}; done
+	# echo "${!devices[@]}" #print all keys in the associative array
+	# for e in "${!devices[@]}"; do echo $e -> ${devices[$e]}; done # iterate through aa
 	
 	echo "Reattaching volume $1 to instance ${devices[$1Instance]} as ${devices[$1]} device."
 	aws ec2 attach-volume --volume-id $1 --instance-id ${devices[$1Instance]} --device ${devices[$1]}
+	[[ "$?" -eq 0 ]] && { unset devices["$1"]; unset devices["$1Instance"]; } # Clear record from array 
 }
 
 volumes=$*
@@ -136,8 +136,8 @@ for volume in ${volumes} ; do
 	if [[ $? -eq 0 ]]; then
 		printf "${green}The content on the $volume volume can be listed ${nc}\n"
 		volumeZone=$(aws ec2 describe-volumes --volume-ids $volume|gawk '/VOLUMES/ {print $2}')
+		# detach volume from stopped instance if attached to stopped instance
 		startOrCreateShreder $volumeZone
-		# detach from running instances
 		attachVolumeToShreder $shrederId $volume
 		# list content / shred the volume
 		# detach from shreder
