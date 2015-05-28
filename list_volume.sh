@@ -20,25 +20,27 @@ nc='\033[0m' # no color
 west1a="not set" #"eu-west-1a"
 west1b="not set" #"eu-west-1b"
 west1c="not set" #"eu-west-1c"
-
+sshKey=$shrederKey #set in you environment
+KEY=$(printf $shrederKey |gawk -F/ '{print $NF}'|gawk -F. '{print $1}')
 isVolumeLive (){
 	# function parameters:  volume ids from command line.
 	# This function returns 0 if volume is attached to stopped instance, 1 is returned otherwise.
 	instanceID=$(aws ec2 describe-volumes --volume-ids $1 | gawk '/ATTACHMENTS/ {print $5}')
-	if [[ instanceID != "" ]]; then
+	if [[ "$instanceID" != "" ]]; then
 		instanceState=$(aws ec2 describe-instances --instance-ids $instanceID | gawk '/^STATE[	 ]/ {print $3}')
+		[[ $instanceState = "stopped" ]] && state="${green}stopped${nc}" || state="${red}running${nc}"
+		printf "$1 belongs to instance $instanceID which is in $state state. "
 	else
 		instanceState="";
+		printf "${green}Volume $1 is not attached to any instances.${nc}"
 	fi
-	[[ $instanceState = "stopped" ]] && state="${green}stopped${nc}" || state="${red}running${nc}"
-	printf "$1 belongs to instance $instanceID which is in $state state. "
 	[[ $instanceState = "stopped" || $instanceState = "" ]] && return 0 || return 1 
 
 }
 
 instanceStartHelper (){ # function parameters: $1 AWS zone availability suffix, e.g. A,B,C  
 	shrederTagName="shreder$1"
-	shrederState=$(aws ec2 describe-instances --filter Name=tag:Name,Values=$shrederTagName|gawk '/STATE[	 ]/ {print $3}'|head -1)
+	shrederState=$(aws ec2 describe-instances --filter Name=tag:Name,Values=$shrederTagName|gawk '/STATE[	 ]/ {print $3}'|sort -n|head -1)
 			[[ $shrederState = "" || $shrederState = "terminated" ]] && shrederState="${red}does not exist. ${nc}" || : ; 
 			printf "$shrederTagName state: $shrederState\n"
 			if [[ "$shrederState" = "stopped" ]]; then
@@ -46,17 +48,17 @@ instanceStartHelper (){ # function parameters: $1 AWS zone availability suffix, 
 				printf "Starting $shrederTagName.\n"
 				aws ec2 start-instances --instance-ids $shrederId
 				while [ "$shrederState" != "running" ]; do
-					shrederState=$(aws ec2 describe-instances --filter Name=tag:Name,Values=$shrederTagName|gawk '/STATE[	 ]/ {print $3}'|head -1)
+					shrederState=$(aws ec2 describe-instances --filter Name=tag:Name,Values=$shrederTagName|gawk '/STATE[	 ]/ {print $3}'|sort -n|head -1)
 					printf "."
 					sleep 5 # move this "while" loop out so it is not blocking the script
 				done
 				printf "\n $shrederTagName state: $shrederState\n"
 			elif [[ "$shrederState" = "" || "$shrederState" = "${red}does not exist. ${nc}" ]]; then
 				printf "Creating new shreder instance $shrederTagName \n"
-				shrederId=$(aws ec2 run-instances --image-id ami-d75bd5a0 --instance-type t1.micro --key-name VPN-key --count 1 --security-groups shreder-group --placement AvailabilityZone=$availabilityZone|gawk '/INSTANCES/ {print $8}')
+				shrederId=$(aws ec2 run-instances --image-id ami-d75bd5a0 --instance-type t1.micro --key-name $KEY --count 1 --security-groups shreder-group --placement AvailabilityZone=$availabilityZone|gawk '/INSTANCES/ {print $8}')
 				aws ec2 create-tags --resources $shrederId --tags Key=Name,Value=$shrederTagName
 				while [ "$shrederState" != "running" ]; do
-					shrederState=$(aws ec2 describe-instances --filter Name=tag:Name,Values=$shrederTagName|gawk '/STATE[	 ]/ {print $3}'|head -1)
+					shrederState=$(aws ec2 describe-instances --filter Name=tag:Name,Values=$shrederTagName|gawk '/STATE[	 ]/ {print $3}'|sort -n|head -1)
 					printf "."
 					sleep 5 # move this "while" loop out so it is not blocking the script
 				done	
@@ -85,10 +87,10 @@ startOrCreateShreder (){
 attachVolumeToShreder (){ # function parameters: $1 shreder instance Id, $2 volume Id to attach
 	blockPrefix="xvd"
 	blocksCount=$(aws ec2 describe-instances --instance-ids $1|gawk "/BLOCKDEVICEMAPPINGS.*$blockPrefix/"|wc -l)
-	blockSuffixOrdinal=$((97 + $blocksCount))
+	blockSuffixOrdinal=$((99 + $blocksCount))
 	blockSuffix=\\$(printf "%o" $blockSuffixOrdinal)
 	blockName="$blockPrefix$(printf $blockSuffix)"
-	blockSuffixOrdinal=96 #reset counter
+	blockSuffixOrdinal=99 #reset counter
 	isBlockNameInUse=$(aws ec2 describe-instances --instance-ids $1|gawk "/BLOCKDEVICEMAPPINGS.*\/dev\/$blockName/"|wc -l)
 	while [ "$isBlockNameInUse" -eq 1 -a "$blockSuffixOrdinal" -le 121 ]; do #if 0 returned then the blocke name is in use already 
 		let "blockSuffixOrdinal++"
@@ -107,13 +109,15 @@ detachVolume (){ # funtion parameters: $1 volume-id
 	# 1. get a mount device
 	# 2. remember it in associative array / consider write it to file later
 	# 3. detach and reattach with  
-	
-	devicesMountDevice=$(aws ec2 describe-volumes --volume-ids $1 |gawk '/ATTACHMENTS/ { print $4 }')
-	devicesInstanceId=$(aws ec2 describe-volumes --volume-ids $1 |gawk '/ATTACHMENTS/ { print $5 }')
-	devices[$1]=$devicesMountDevice
-	devices[$1Instance]=$devicesInstanceId
-	echo "Detaching volume $1 from ${devices[$1Instance]} mounted as $devicesMountDevice device"
-	aws ec2 detach-volume --volume-id $1
+	volumeState=$(aws ec2 describe-volumes --volume-ids $1|gawk '/VOLUMES/ {print $8}')
+	if [[ "$volumeState" != "available" ]]; then 
+		devicesMountDevice=$(aws ec2 describe-volumes --volume-ids $1 |gawk '/ATTACHMENTS/ { print $4 }')
+		devicesInstanceId=$(aws ec2 describe-volumes --volume-ids $1 |gawk '/ATTACHMENTS/ { print $5 }')
+		devices[$1]=$devicesMountDevice
+		devices[$1Instance]=$devicesInstanceId
+		echo "Detaching volume $1 from ${devices[$1Instance]} mounted as $devicesMountDevice device"
+		aws ec2 detach-volume --volume-id $1
+	fi
 }
 
 reattachVolume(){ # funtion parameters: $1 volume-id
@@ -130,10 +134,19 @@ reattachVolume(){ # funtion parameters: $1 volume-id
 	[[ "$?" -eq 0 ]] && { unset devices["$1"]; unset devices["$1Instance"]; } # Clear record from array 
 }
 
-listVolumeContent(){
+runCommandOnShreder(){ 
 	# ssh to shreder
+	sshOpts="-q -o StrictHostKeyChecking=no -i $sshKey"
+	shrederIp=$(aws ec2 describe-instances --instance-ids $shrederId |gawk '/INSTANCES/ {print $16}')
+	ssh $sshOpts ubuntu@$shrederIp $*
+}
+
+listVolumeContent(){
 	# get logical disks on the volume
+	volumeBlockNames=$(runCommandOnShreder "ls -l /dev/|grep \"$blockName\""|wc -l)
+	echo "$volumeBlockNames"
 	# create mount points for logical disks
+	# runCommandOnShreder "sudo mkdir -p /$volume"
 	# mount logical disks
 	# list its contents
 	# save it to aws S3 bucket
@@ -151,7 +164,7 @@ for volume in ${volumes} ; do
 		detachVolume $volume
 		startOrCreateShreder $volumeZone
 		attachVolumeToShreder $shrederId $volume
-
+		listVolumeContent
 		# list content / shred volume
 		# detach from shreder
 		#reattach / dispose
