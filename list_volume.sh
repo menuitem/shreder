@@ -130,6 +130,17 @@ reattachVolume(){ # funtion parameters: $1 volume-id
 	[[ "$?" -eq 0 ]] && { unset devices["$1"]; unset devices["$1Instance"]; } # Clear record from array 
 }
 
+listVolumeContent(){
+	# ssh to shreder
+	# get logical disks on the volume
+	# create mount points for logical disks
+	# mount logical disks
+	# list its contents
+	# save it to aws S3 bucket
+	# umount logical disks
+	# delete the mount points   
+}
+
 volumes=$*
 for volume in ${volumes} ; do
 	isVolumeLive $volume
@@ -137,14 +148,14 @@ for volume in ${volumes} ; do
 		printf "${green}The content on the $volume volume can be listed ${nc}\n"
 		volumeZone=$(aws ec2 describe-volumes --volume-ids $volume|gawk '/VOLUMES/ {print $2}')
 		# detach volume from stopped instance if attached to stopped instance
+		detachVolume $volume
 		startOrCreateShreder $volumeZone
 		attachVolumeToShreder $shrederId $volume
-		# list content / shred the volume
+
+		# list content / shred volume
 		# detach from shreder
 		#reattach / dispose
 	else 
 		printf "${red}The content on $volume volume can not be listed ${nc}\n"
 	fi
 done;
-
-# instanceStartHelper ZoneA
