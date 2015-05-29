@@ -20,7 +20,7 @@ nc='\033[0m' # no color
 west1a="not set" #"eu-west-1a"
 west1b="not set" #"eu-west-1b"
 west1c="not set" #"eu-west-1c"
-sshKey=$shrederKey #set in you environment
+sshKey=$shrederKey #the path to key-file that must be set in your environment
 KEY=$(printf $shrederKey |gawk -F/ '{print $NF}'|gawk -F. '{print $1}')
 isVolumeLive (){
 	# function parameters:  volume ids from command line.
@@ -89,6 +89,7 @@ attachVolumeToShreder (){ # function parameters: $1 shreder instance Id, $2 volu
 	blocksCount=$(aws ec2 describe-instances --instance-ids $1|gawk "/BLOCKDEVICEMAPPINGS.*$blockPrefix/"|wc -l)
 	blockSuffixOrdinal=$((99 + $blocksCount))
 	blockSuffix=\\$(printf "%o" $blockSuffixOrdinal)
+	blockSuffix=$(printf $blockSuffix)
 	blockName="$blockPrefix$(printf $blockSuffix)"
 	blockSuffixOrdinal=99 #reset counter
 	isBlockNameInUse=$(aws ec2 describe-instances --instance-ids $1|gawk "/BLOCKDEVICEMAPPINGS.*\/dev\/$blockName/"|wc -l)
@@ -101,6 +102,15 @@ attachVolumeToShreder (){ # function parameters: $1 shreder instance Id, $2 volu
 	blockDevice="/dev/${blockName}"
 	printf "Attaching volume $2 to $1 as $blockDevice device.\n"
 	aws ec2 attach-volume --volume-id $2 --instance-id $1 --device "$blockDevice"
+	volumeStatus=$(aws ec2 describe-volumes --volume-ids $2|gawk '/VOLUMES/ {print $8}')
+	
+	# aws returns the vol in-use, but the vol is not visble in the os for another 5 1-3 seconds
+	sleep 5 #the volume is attaching ans we must wait, need to add check when attaching 
+	# while [ "$volumeStatus" != "in-use" ]; do
+	# 	volumeStatus=$(aws ec2 describe-volumes --volume-ids $2|gawk '/VOLUMES/ {print $8}')
+	# 	printf "$volumeStatus."
+	# 	sleep 5 # move this "while" loop out so it is not blocking the script
+	# done
 }
 
 
@@ -143,8 +153,16 @@ runCommandOnShreder(){
 
 listVolumeContent(){
 	# get logical disks on the volume
-	volumeBlockNames=$(runCommandOnShreder "ls -l /dev/|grep \"$blockName\""|wc -l)
-	echo "$volumeBlockNames"
+	volumeBlockNamesCount=$(runCommandOnShreder "ls -l /dev/|grep \"$blockName\""|wc -l)
+
+	echo "$volumeBlockNamesCount"
+	if [[ "$volumeBlockNamesCount" -eq 1 ]]; then
+		echo "volume_blockSuffix ${volume}_${blockSuffix}"
+		echo "blockSuffix $blockSuffix"
+		echo "volume $volume"
+		runCommandOnShreder "sudo mkdir /${volume}_${blockSuffix};sudo mount $blockDevice /${volume}_${blockSuffix}; sudo ls -laR /${volume}_${blockSuffix} > ${volume}${blockName}_$(date +%Y%m%d:%H%M%S) && sudo umount /${volume}_${blockSuffix};" 
+		runCommandOnShreder "test \"$(ls -A /${volume}_${blockSuffix} 2>/dev/null)\" || sudo rm -rf /${volume}_${blockSuffix}"
+	fi 
 	# create mount points for logical disks
 	# runCommandOnShreder "sudo mkdir -p /$volume"
 	# mount logical disks
