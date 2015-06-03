@@ -105,7 +105,8 @@ attachVolumeToShreder (){ # function parameters: $1 shreder instance Id, $2 volu
 	volumeStatus=$(aws ec2 describe-volumes --volume-ids $2|gawk '/VOLUMES/ {print $8}')
 	
 	# aws returns the vol in-use, but the vol is not visble in the os for another 5 1-3 seconds
-	sleep 5 #the volume is attaching ans we must wait, need to add check when attaching 
+	sleep 5 
+	#the volume is attaching and we must wait, need to add check when attaching. This is invalidated because of the above. 
 	# while [ "$volumeStatus" != "in-use" ]; do
 	# 	volumeStatus=$(aws ec2 describe-volumes --volume-ids $2|gawk '/VOLUMES/ {print $8}')
 	# 	printf "$volumeStatus."
@@ -138,10 +139,11 @@ reattachVolume(){ # funtion parameters: $1 volume-id
 	
 	# echo "${!devices[@]}" #print all keys in the associative array
 	# for e in "${!devices[@]}"; do echo $e -> ${devices[$e]}; done # iterate through aa
-	
-	echo "Reattaching volume $1 to instance ${devices[$1Instance]} as ${devices[$1]} device."
-	aws ec2 attach-volume --volume-id $1 --instance-id ${devices[$1Instance]} --device ${devices[$1]}
-	[[ "$?" -eq 0 ]] && { unset devices["$1"]; unset devices["$1Instance"]; } # Clear record from array 
+	if  [[ ${devices[$1]} != "" ]]; then 
+		echo "Reattaching volume $1 to instance ${devices[$1Instance]} as ${devices[$1]} device."
+		aws ec2 attach-volume --volume-id $1 --instance-id ${devices[$1Instance]} --device ${devices[$1]}
+		[[ "$?" -eq 0 ]] && { unset devices["$1"]; unset devices["$1Instance"]; } # Clear record from array 
+	fi
 }
 
 runCommandOnShreder(){ 
@@ -151,18 +153,25 @@ runCommandOnShreder(){
 	ssh $sshOpts ubuntu@$shrederIp $*
 }
 
+startOrCreateBucket(){ # start or create AWS Bucket
+	aws s3api list-buckets|grep shreder
+	[[ "$?" -eq 1 ]] && { aws s3api create-bucket --bucket shreder; echo "Creating bucket \"shreder\""; } || { echo "Shreder aws bucket ok."; }
+}
+
 listVolumeContent(){
 	# get logical disks on the volume
 	volumeBlockNamesCount=$(runCommandOnShreder "ls -l /dev/|grep \"$blockName\""|wc -l)
-
-	echo "$volumeBlockNamesCount"
 	if [[ "$volumeBlockNamesCount" -eq 1 ]]; then
-		echo "volume_blockSuffix ${volume}_${blockSuffix}"
-		echo "blockSuffix $blockSuffix"
-		echo "volume $volume"
-		runCommandOnShreder "sudo mkdir /${volume}_${blockSuffix};sudo mount $blockDevice /${volume}_${blockSuffix}; sudo ls -laR /${volume}_${blockSuffix} > ${volume}${blockName}_$(date +%Y%m%d:%H%M%S) && sudo umount /${volume}_${blockSuffix};" 
+		echo "Listing content on $volume "
+		local volumeFile=${volume}${blockName}_$(date +%Y%m%d:%H%M%S)
+		runCommandOnShreder "sudo mkdir /${volume}_${blockSuffix};sudo mount $blockDevice /${volume}_${blockSuffix}; sudo ls -laR /${volume}_${blockSuffix} > $volumeFile && sudo umount /${volume}_${blockSuffix};" 
 		runCommandOnShreder "test \"$(ls -A /${volume}_${blockSuffix} 2>/dev/null)\" || sudo rm -rf /${volume}_${blockSuffix}"
+		scp -i $shrederKey ubuntu@$shrederIp:~/$volumeFile /tmp && aws s3api put-object --bucket shreder --key $volumeFile --body /tmp/$volumeFile && rm /tmp/$volumeFile
+	# elif add a case whwere there is more then one logical drive
+	else
+		echo "More then one logical disk. Not doing anything." 
 	fi 
+	
 	# create mount points for logical disks
 	# runCommandOnShreder "sudo mkdir -p /$volume"
 	# mount logical disks
@@ -172,21 +181,59 @@ listVolumeContent(){
 	# delete the mount points   
 }
 
-volumes=$*
-for volume in ${volumes} ; do
-	isVolumeLive $volume
-	if [[ $? -eq 0 ]]; then
-		printf "${green}The content on the $volume volume can be listed ${nc}\n"
-		volumeZone=$(aws ec2 describe-volumes --volume-ids $volume|gawk '/VOLUMES/ {print $2}')
-		# detach volume from stopped instance if attached to stopped instance
-		detachVolume $volume
-		startOrCreateShreder $volumeZone
-		attachVolumeToShreder $shrederId $volume
-		listVolumeContent
-		# list content / shred volume
-		# detach from shreder
-		#reattach / dispose
-	else 
-		printf "${red}The content on $volume volume can not be listed ${nc}\n"
-	fi
-done;
+shredVolume(){
+	volumeBlockNamesCount=$(runCommandOnShreder "ls -l /dev/|grep \"$blockName\""|wc -l)
+	if [[ "$volumeBlockNamesCount" -eq 1 ]]; then
+		# runCommandOnShreder "sudo mkdir /${volume}_${blockSuffix};sudo mount $blockDevice /${volume}_${blockSuffix}; sudo rm -rf /${volume}_${blockSuffix}/*" # " && sudo umount /${volume}_${blockSuffix};" 
+		# runCommandOnShreder "test \"$(ls -A /${volume}_${blockSuffix} 2>/dev/null)\" || sudo rm -rf /${volume}_${blockSuffix}"
+		# no need to mount fs and delete files, just shred it
+		echo "shredding volume $volume."
+		runCommandOnShreder "sudo dd if=/dev/zero bs=1M of=$blockName"
+	# elif add a case whwere there is more then one logical drive
+	fi 
+}
+
+shred (){ 
+	volumes=$*
+	for volume in ${volumes} ; do
+		isVolumeLive $volume
+		if [[ $? -eq 0 ]]; then
+			printf "${green}The content on the $volume volume can be listed ${nc}\n"
+			volumeZone=$(aws ec2 describe-volumes --volume-ids $volume|gawk '/VOLUMES/ {print $2}')
+			detachVolume $volume #detach volume from stopped instance if attached
+			startOrCreateBucket
+			startOrCreateShreder $volumeZone
+			attachVolumeToShreder $shrederId $volume
+			shredVolume
+			aws ec2 detach-volume --volume-id $volume
+			#dispose volume when shreded
+		else 
+			printf "${red}The content on $volume volume can not be listed ${nc}\n"
+		fi
+			reattachVolume $volume
+	done;
+}
+
+list (){ 
+	volumes=$*
+	for volume in ${volumes} ; do
+		isVolumeLive $volume
+		if [[ $? -eq 0 ]]; then
+			printf "${green}The content on the $volume volume can be listed ${nc}\n"
+			volumeZone=$(aws ec2 describe-volumes --volume-ids $volume|gawk '/VOLUMES/ {print $2}')
+			detachVolume $volume #detach volume from stopped instance if attached
+			startOrCreateBucket
+			startOrCreateShreder $volumeZone
+			attachVolumeToShreder $shrederId $volume
+			listVolumeContent
+			aws ec2 detach-volume --volume-id $volume && sleep 10
+			reattachVolume $volume
+		else 
+			printf "${red}The content on $volume volume can not be listed ${nc}\n"
+		fi
+			reattachVolume $volume
+	done;
+}
+
+list $*
+
