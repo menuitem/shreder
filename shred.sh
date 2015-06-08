@@ -188,7 +188,7 @@ shredVolume(){
 		# runCommandOnShreder "test \"$(ls -A /${volume}_${blockSuffix} 2>/dev/null)\" || sudo rm -rf /${volume}_${blockSuffix}"
 		# no need to mount fs and delete files, just shred it
 		echo "shredding volume $volume."
-		runCommandOnShreder "sudo dd if=/dev/zero bs=1M of=$blockName"
+		runCommandOnShreder "sudo dd if=/dev/zero bs=1M of=/dev/${blockName}"
 	# elif add a case whwere there is more then one logical drive
 	fi 
 }
@@ -198,20 +198,19 @@ shred (){
 	for volume in ${volumes} ; do
 		isVolumeLive $volume
 		if [[ $? -eq 0 ]]; then
-			printf "${green}The content on the $volume volume can be listed ${nc}\n"
+			printf "${green}The content on the $volume volume will be shreded now.${nc}\n"
+			printf "${red}All data will be lost forever, and the volume will be deleted from AWS.${nc}\n"
+
 			volumeZone=$(aws ec2 describe-volumes --volume-ids $volume|gawk '/VOLUMES/ {print $2}')
 			detachVolume $volume #detach volume from stopped instance if attached
 			startOrCreateBucket
 			startOrCreateShreder $volumeZone
 			attachVolumeToShreder $shrederId $volume
 			shredVolume
-			aws ec2 detach-volume --volume-id $volume
-			#dispose volume when shreded
-			aws ec2 delete-volume --volume-id $volume
+			aws ec2 detach-volume --volume-id $volume && aws ec2 delete-volume --volume-id $volume
 		else 
 			printf "${red}The content on $volume volume can not be listed ${nc}\n"
 		fi
-			reattachVolume $volume
 	done;
 }
 
