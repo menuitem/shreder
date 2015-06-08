@@ -207,6 +207,7 @@ shred (){
 			shredVolume
 			aws ec2 detach-volume --volume-id $volume
 			#dispose volume when shreded
+			aws ec2 delete-volume --volume-id $volume
 		else 
 			printf "${red}The content on $volume volume can not be listed ${nc}\n"
 		fi
