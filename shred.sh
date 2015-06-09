@@ -209,7 +209,7 @@ shred (){
 			shredVolume
 			aws ec2 detach-volume --volume-id $volume && aws ec2 delete-volume --volume-id $volume
 		else 
-			printf "${red}The content on $volume volume can not be listed ${nc}\n"
+			printf "${red}The content on $volume volume can not be shreded! ${nc}\n"
 		fi
 	done;
 }
@@ -240,10 +240,10 @@ parameters=$1
 
 case $parameters in
 	-l|--list) shift; 
-	printf "$green Listing: $* $nc \n"; list $*
+	printf "${green}Listing: $* ${nc} \n"; list $*
 	;;
 	-s|--shred) shift; 
-	printf "$red Shreding $* $nc \n"; shred $*
+	printf "${red}Shreding $* ${nc} \n"; shred $*
 	;;
 	* ) printf "Usage:\n\t-l/--list for listing volumes, \n\t-s/--shred for shreding volumes.\n"
 esac
