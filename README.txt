@@ -1,10 +1,9 @@
 I. Installing AWS Command Line Interface (with pip)
 http://docs.aws.amazon.com/cli/latest/userguide/installing.html#install-with-pip
-You will need python version => 2.7 
-1. Download the installation script:
-: $; curl -O https://bootstrap.pypa.io/get-pip.py
-2. Run the script with python
-: $; sudo python2.7 get-pip.py
+You will need python version 2.6.5+ or Python 3 version 3.3+
+Install aws cli with pip
+: $; sudo pip install awscli
+: $; sudo pip install --upgrade awscli
 3. Test AWS command Line Interface
 : $; aws help
 4. Configure AWS Command Line Interface
