@@ -164,7 +164,7 @@ listVolumeContent(){
 	if [[ "$volumeBlockNamesCount" -eq 1 ]]; then
 		echo "Listing content on $volume "
 		local volumeFile=${volume}${blockName}_$(date +%Y%m%d:%H%M%S)
-		runCommandOnShreder "sudo mkdir /${volume}_${blockSuffix};sudo mount $blockDevice /${volume}_${blockSuffix}; sudo ls -laR /${volume}_${blockSuffix} > $volumeFile && sudo umount /${volume}_${blockSuffix};" 
+		runCommandOnShreder "sudo mkdir /${volume}_${blockSuffix};sudo mount $blockDevice /${volume}_${blockSuffix}; sudo df -Th /${volume}_${blockSuffix}>$volumeFile; sudo ls -laR /${volume}_${blockSuffix} >> $volumeFile && sudo umount /${volume}_${blockSuffix};" 
 		runCommandOnShreder "test \"$(ls -A /${volume}_${blockSuffix} 2>/dev/null)\" || sudo rm -rf /${volume}_${blockSuffix}"
 		scp -i $shrederKey ubuntu@$shrederIp:~/$volumeFile /tmp && aws s3api put-object --bucket shreder --key $volumeFile --body /tmp/$volumeFile && rm /tmp/$volumeFile
 	# elif add a case whwere there is more then one logical drive
@@ -209,7 +209,7 @@ shred (){
 			shredVolume
 			aws ec2 detach-volume --volume-id $volume 
 			sleep 20
-			aws ec2 delete-volume --volume-id $volume && echo "Volume $volume deleted from AWS."
+			aws ec2 delete-volume --volume-id $volume && echo "Volume $volume has been deleted successfully from AWS."
 		else 
 			printf "${red}The content on $volume volume can not be shreded! ${nc}\n"
 		fi
