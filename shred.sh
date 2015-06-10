@@ -209,7 +209,7 @@ shred (){
 			shredVolume
 			aws ec2 detach-volume --volume-id $volume 
 			sleep 20
-			aws ec2 delete-volume --volume-id $volume || echo "Cannot delete the volume $volume"
+			aws ec2 delete-volume --volume-id $volume && echo "Volume $volume deleted from AWS."
 		else 
 			printf "${red}The content on $volume volume can not be shreded! ${nc}\n"
 		fi
