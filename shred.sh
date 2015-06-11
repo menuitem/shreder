@@ -257,6 +257,7 @@ case $parameters in
 	printf "${red}Shreding $* ${nc} \n"; shred $*
 	;;
 	* ) printf "Usage:\n\t-l/--list for listing volumes, \n\t-s/--shred for shreding volumes.\n"
+	;;
 esac
 
 #echo -e displays colours
