@@ -22,6 +22,8 @@ west1b="not set" #"eu-west-1b"
 west1c="not set" #"eu-west-1c"
 sshKey=$shrederKey #the path to key-file that must be set in your environment
 KEY=$(printf $shrederKey |gawk -F/ '{print $NF}'|gawk -F. '{print $1}')
+volumeFile=""
+
 isVolumeLive (){
 	# function parameters:  volume ids from command line.
 	# This function returns 0 if volume is attached to stopped instance, 1 is returned otherwise.
@@ -103,6 +105,7 @@ attachVolumeToShreder (){ # function parameters: $1 shreder instance Id, $2 volu
 	printf "Attaching volume $2 to $1 as $blockDevice device.\n"
 	aws ec2 attach-volume --volume-id $2 --instance-id $1 --device "$blockDevice"
 	volumeStatus=$(aws ec2 describe-volumes --volume-ids $2|gawk '/VOLUMES/ {print $8}')
+
 	
 	# aws returns the vol in-use, but the vol is not visble in the os for another 5 1-3 seconds
 	sleep 5 
@@ -126,8 +129,12 @@ detachVolume (){ # funtion parameters: $1 volume-id
 		devicesInstanceId=$(aws ec2 describe-volumes --volume-ids $1 |gawk '/ATTACHMENTS/ { print $5 }')
 		devices[$1]=$devicesMountDevice
 		devices[$1Instance]=$devicesInstanceId
+	    instanceTag=$(aws ec2 describe-instances --instance-ids $devicesInstanceId|gawk '/TAGS.*Name/ {print $3}')
+	    volumeFile="${instanceTag}_${volume}_$(cut -d/ -f3<<<$devicesMountDevice)_$(date +%Y%m%d_%H%M%S)"
 		echo "Detaching volume $1 from ${devices[$1Instance]} mounted as $devicesMountDevice device"
 		aws ec2 detach-volume --volume-id $1
+	else
+		volumeFile="available_${volume}${blockName}_$(date +%Y%m%d_%H%M%S)"
 	fi
 }
 
@@ -163,8 +170,7 @@ listVolumeContent(){
 	volumeBlockNamesCount=$(runCommandOnShreder "ls -l /dev/|grep \"$blockName\""|wc -l)
 	if [[ "$volumeBlockNamesCount" -eq 1 ]]; then
 		echo "Listing content on $volume "
-		local volumeFile=${volume}${blockName}_$(date +%Y%m%d:%H%M%S)
-		runCommandOnShreder "sudo mkdir /${volume}_${blockSuffix};sudo mount $blockDevice /${volume}_${blockSuffix}; sudo df -Th /${volume}_${blockSuffix}>$volumeFile; sudo ls -laR /${volume}_${blockSuffix} >> $volumeFile && sudo umount /${volume}_${blockSuffix};" 
+		runCommandOnShreder "sudo mkdir -p /${volume}_${blockSuffix};sudo mount $blockDevice /${volume}_${blockSuffix}; sudo df -Th /${volume}_${blockSuffix}>$volumeFile; sudo ls -laR /${volume}_${blockSuffix} >> $volumeFile && sudo umount /${volume}_${blockSuffix};" 
 		runCommandOnShreder "test \"$(ls -A /${volume}_${blockSuffix} 2>/dev/null)\" || sudo rm -rf /${volume}_${blockSuffix}"
 		scp -i $shrederKey ubuntu@$shrederIp:~/$volumeFile /tmp && aws s3api put-object --bucket shreder --key $volumeFile --body /tmp/$volumeFile && rm /tmp/$volumeFile
 	# elif add a case whwere there is more then one logical drive
@@ -182,13 +188,16 @@ listVolumeContent(){
 }
 
 shredVolume(){
+
 	volumeBlockNamesCount=$(runCommandOnShreder "ls -l /dev/|grep \"$blockName\""|wc -l)
 	if [[ "$volumeBlockNamesCount" -eq 1 ]]; then
+		devicesInstanceId=$(aws ec2 describe-volumes --volume-ids $volume |gawk '/ATTACHMENTS/ { print $5 }')
 		# runCommandOnShreder "sudo mkdir /${volume}_${blockSuffix};sudo mount $blockDevice /${volume}_${blockSuffix}; sudo rm -rf /${volume}_${blockSuffix}/*" # " && sudo umount /${volume}_${blockSuffix};" 
 		# runCommandOnShreder "test \"$(ls -A /${volume}_${blockSuffix} 2>/dev/null)\" || sudo rm -rf /${volume}_${blockSuffix}"
 		# no need to mount fs and delete files, just shred it
 		echo "shredding volume $volume."
 		runCommandOnShreder "sudo dd if=/dev/zero bs=1M of=/dev/${blockName}"
+		[[ "$devicesInstanceId" != "" ]] && $(aws ec2 create-tags --resources  ${devicesInstanceId} --tags Key=$volume,Value=shreded_on_$(date +%Y%m%d_%H%M%S))
 	# elif add a case whwere there is more then one logical drive
 	fi 
 }
@@ -249,3 +258,7 @@ case $parameters in
 	;;
 	* ) printf "Usage:\n\t-l/--list for listing volumes, \n\t-s/--shred for shreding volumes.\n"
 esac
+
+#echo -e displays colours
+#echo -n doesnt print EOL
+
