@@ -23,7 +23,7 @@ west1c="not set" #"eu-west-1c"
 sshKey=$shrederKey #the path to key-file that must be set in your environment
 KEY=$(printf $shrederKey |gawk -F/ '{print $NF}'|gawk -F. '{print $1}')
 volumeFile=""
-
+devicesInstanceId=""
 isVolumeLive (){
 	# function parameters:  volume ids from command line.
 	# This function returns 0 if volume is attached to stopped instance, 1 is returned otherwise.
@@ -167,15 +167,25 @@ startOrCreateBucket(){ # start or create AWS Bucket
 
 listVolumeContent(){
 	# get logical disks on the volume
-	volumeBlockNamesCount=$(runCommandOnShreder "ls -l /dev/|grep \"$blockName\""|wc -l)
+	volumeBlockNamesCount=$(runCommandOnShreder "ls -l /dev/|grep \"$blockName\"|wc -l")
 	if [[ "$volumeBlockNamesCount" -eq 1 ]]; then
+		echo "No logical disks on $volume."
 		echo "Listing content on $volume "
 		runCommandOnShreder "sudo mkdir -p /${volume}_${blockSuffix};sudo mount $blockDevice /${volume}_${blockSuffix}; sudo df -Th /${volume}_${blockSuffix}>$volumeFile; sudo ls -laR /${volume}_${blockSuffix} >> $volumeFile && sudo umount /${volume}_${blockSuffix};" 
 		runCommandOnShreder "test \"$(ls -A /${volume}_${blockSuffix} 2>/dev/null)\" || sudo rm -rf /${volume}_${blockSuffix}"
+		echo "Uploading $volumeFile to s3://shreder"
 		scp -i $shrederKey ubuntu@$shrederIp:~/$volumeFile /tmp && aws s3api put-object --bucket shreder --key $volumeFile --body /tmp/$volumeFile && rm /tmp/$volumeFile
-	# elif add a case whwere there is more then one logical drive
-	else
-		echo "More then one logical disk. Not doing anything." 
+	elif [[ "$volumeBlockNamesCount" -ge 2 ]]; then
+		logicalDisks=$(runCommandOnShreder "ls -l /dev/| grep -oE \"xvd${blockSuffix}[1-9]?\"")
+		echo -e "Logical disks on $volume: \n\t${logicalDisks}"
+		for ld in ${logicalDisks:4} ; do
+	    	volumeFile="${instanceTag}_${volume}_$(cut -d/ -f3<<<$devicesMountDevice)${ld: -1}_$(date +%Y%m%d_%H%M%S)"
+			echo "Listing content on $volume /dev/${ld}"
+		 	runCommandOnShreder "sudo mkdir -p /${volume}_${ld};sudo mount $blockDevice${ld: -1} /${volume}_${ld}; sudo df -Th /${volume}_${ld}>$volumeFile; sudo ls -laR /${volume}_${ld} >> $volumeFile && sudo umount /${volume}_${ld};" 
+			runCommandOnShreder "test \"$(ls -A /${volume}_${ld} 2>/dev/null)\" || sudo rm -rf /${volume}_${ld}"
+			echo "Uploading $volumeFile to s3://shreder"
+			scp -i $shrederKey ubuntu@$shrederIp:~/$volumeFile /tmp && aws s3api put-object --bucket shreder --key $volumeFile --body /tmp/$volumeFile && rm /tmp/$volumeFile
+		done;
 	fi 
 	
 	# create mount points for logical disks
@@ -188,18 +198,8 @@ listVolumeContent(){
 }
 
 shredVolume(){
-
-	volumeBlockNamesCount=$(runCommandOnShreder "ls -l /dev/|grep \"$blockName\""|wc -l)
-	if [[ "$volumeBlockNamesCount" -eq 1 ]]; then
-		devicesInstanceId=$(aws ec2 describe-volumes --volume-ids $volume |gawk '/ATTACHMENTS/ { print $5 }')
-		# runCommandOnShreder "sudo mkdir /${volume}_${blockSuffix};sudo mount $blockDevice /${volume}_${blockSuffix}; sudo rm -rf /${volume}_${blockSuffix}/*" # " && sudo umount /${volume}_${blockSuffix};" 
-		# runCommandOnShreder "test \"$(ls -A /${volume}_${blockSuffix} 2>/dev/null)\" || sudo rm -rf /${volume}_${blockSuffix}"
-		# no need to mount fs and delete files, just shred it
-		echo "shredding volume $volume."
-		runCommandOnShreder "sudo dd if=/dev/zero bs=1M of=/dev/${blockName}"
-		[[ "$devicesInstanceId" != "" ]] && $(aws ec2 create-tags --resources  ${devicesInstanceId} --tags Key=$volume,Value=shreded_on_$(date +%Y%m%d_%H%M%S))
-	# elif add a case whwere there is more then one logical drive
-	fi 
+	echo "shredding volume $volume."
+	runCommandOnShreder "sudo dd if=/dev/zero bs=1M of=/dev/${blockName}"
 }
 
 shred (){ 
@@ -209,13 +209,13 @@ shred (){
 		if [[ $? -eq 0 ]]; then
 			printf "${green}The content on the $volume volume will be shreded now.${nc}\n"
 			printf "${red}All data will be lost forever, and the volume will be deleted from AWS.${nc}\n"
-
 			volumeZone=$(aws ec2 describe-volumes --volume-ids $volume|gawk '/VOLUMES/ {print $2}')
 			detachVolume $volume #detach volume from stopped instance if attached
 			startOrCreateBucket
 			startOrCreateShreder $volumeZone
 			attachVolumeToShreder $shrederId $volume
 			shredVolume
+			[[ "$devicesInstanceId" != "" ]] && $(aws ec2 create-tags --resources  ${devicesInstanceId} --tags Key=$volume,Value=shreded_on_$(date +%Y%m%d_%H%M%S))
 			aws ec2 detach-volume --volume-id $volume 
 			sleep 20
 			aws ec2 delete-volume --volume-id $volume && echo "Volume $volume has been deleted successfully from AWS."
