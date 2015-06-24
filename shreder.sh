@@ -46,7 +46,8 @@ instanceStartHelper (){ # function parameters: $1 AWS zone availability suffix, 
 			[[ $shrederState = "" || $shrederState = "terminated" ]] && shrederState="${red}does not exist. ${nc}" || : ; 
 			printf "$shrederTagName state: $shrederState\n"
 			if [[ "$shrederState" = "stopped" ]]; then
-				shrederId=$(aws ec2 describe-instances --filter Name=tag:Name,Values=$shrederTagName|gawk '/INSTANCES.*/{print $8}')
+				echo "shrederTagName $shrederTagName"
+				shrederId=$(aws ec2 describe-instances --filter Name=tag:Name,Values=$shrederTagName|gawk '/INSTANCES.*/{print $7}')
 				printf "Starting $shrederTagName.\n"
 				aws ec2 start-instances --instance-ids $shrederId
 				while [ "$shrederState" != "running" ]; do
@@ -65,7 +66,7 @@ instanceStartHelper (){ # function parameters: $1 AWS zone availability suffix, 
 					sleep 5 # move this "while" loop out so it is not blocking the script
 				done	
 			fi
-		shrederId=$(aws ec2 describe-instances --filter Name=tag:Name,Values=$shrederTagName|gawk '/INSTANCES.*/{print $8}')
+		shrederId=$(aws ec2 describe-instances --filter Name=tag:Name,Values=$shrederTagName|gawk '/INSTANCES.*/{print $7}')
 }
 
 startOrCreateShreder (){
