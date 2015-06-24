@@ -156,7 +156,7 @@ reattachVolume(){ # funtion parameters: $1 volume-id
 runCommandOnShreder(){ 
 	# ssh to shreder
 	sshOpts="-q -o StrictHostKeyChecking=no -i $sshKey"
-	shrederIp=$(aws ec2 describe-instances --instance-ids $shrederId |gawk '/INSTANCES/ {print $16}')
+	shrederIp=$(aws ec2 describe-instances --instance-ids $shrederId |gawk '/INSTANCES/ {print $15}')
 	ssh $sshOpts ubuntu@$shrederIp $*
 }
 
