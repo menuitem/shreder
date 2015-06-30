@@ -58,7 +58,7 @@ instanceStartHelper (){ # function parameters: $1 AWS zone availability suffix, 
 				printf "\n $shrederTagName state: $shrederState\n"
 			elif [[ "$shrederState" = "" || "$shrederState" = "${red}does not exist. ${nc}" ]]; then
 				printf "Creating new shreder instance $shrederTagName \n"
-				shrederId=$(aws ec2 run-instances --image-id ami-d75bd5a0 --instance-type t1.micro --key-name $KEY --count 1 --security-groups shreder-group --placement AvailabilityZone=$availabilityZone|gawk '/INSTANCES/ {print $8}')
+				shrederId=$(aws ec2 run-instances --image-id ami-d75bd5a0 --instance-type t1.micro --key-name $KEY --count 1 --security-groups shreder-group --placement AvailabilityZone=$availabilityZone|gawk '/INSTANCES/ {print $7}')
 				aws ec2 create-tags --resources $shrederId --tags Key=Name,Value=$shrederTagName
 				while [ "$shrederState" != "running" ]; do
 					shrederState=$(aws ec2 describe-instances --filter Name=tag:Name,Values=$shrederTagName|gawk '/STATE[	 ]/ {print $3}'|sort -n|head -1)
